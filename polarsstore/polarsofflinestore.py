@@ -22,8 +22,9 @@ class PolarsOfflineStoreConfig(BaseModel):
 
 
 class CustomRetrievalJob(RetrievalJob):
-    def __init__(self, dataframe: pl.DataFrame):
+    def __init__(self, dataframe: pl.DataFrame, elapsed_time_ms: float = None):
         self.dataframe = dataframe
+        self.elapsed_time_ms = elapsed_time_ms
 
     def to_df(self):
         return self.dataframe
@@ -135,6 +136,7 @@ class PolarsOfflineStore(OfflineStore):
         full_feature_names: bool = False,
     ) -> RetrievalJob:
         try:
+            begin = time.perf_counter_ns()
 
             combined_feature_df = pl.DataFrame()
             for fv in feature_views:
@@ -169,7 +171,10 @@ class PolarsOfflineStore(OfflineStore):
             else:
                 raise NotImplementedError("SQL query handling is not implemented.")
 
-            return CustomRetrievalJob(result_df)
+            end = time.perf_counter_ns()
+            elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
+
+            return CustomRetrievalJob(result_df, elapsed_time_ms)
 
         except Exception as e:
             logging.error(f"Error in get_historical_features: {str(e)}")

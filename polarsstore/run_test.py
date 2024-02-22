@@ -45,7 +45,7 @@ def run_tests():
     print("Running tests....")
     results = []
     results.append(
-        ["Number of columns", "Number of rows", "get_historical_feature read in ms"]
+        ["Number of columns", "Number of rows", "get_historical_feature read in ms", "polarsstore read in ms", "overhead"]
     )
 
     for num_columns, num_rows in test_cases:
@@ -87,15 +87,17 @@ def run_tests():
         begin = time.perf_counter_ns()
         feature_df = fs.get_historical_features(
             entity_df=entity_df, features=feature_refs
-        ).to_df()  # Use .to_df() to materialize the result into a DataFrame
+        )
+        feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
         end = time.perf_counter_ns()
 
         elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
+        overhead_time_ms = elapsed_time_ms - feature_df.elapsed_time_ms
         print(
-            f"Test with {num_columns} columns and {num_rows} rows took {elapsed_time_ms} ms"
+            f"Test with {num_columns} columns and {num_rows} rows took {elapsed_time_ms} ms ({feature_df.elapsed_time_ms} ms in custom store - overhead: {overhead_time_ms})"
         )
 
-        results.append([num_columns, num_rows, elapsed_time_ms])
+        results.append([num_columns, num_rows, elapsed_time_ms, feature_df.elapsed_time_ms, overhead_time_ms])
 
     # write results to csv file
     write_results_to_csv_file(results, "results.csv")
