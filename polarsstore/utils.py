@@ -14,7 +14,7 @@ import time
 
 s3_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
 s3_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-minio_endpoint = os.environ.get("FEAST_S3_ENDPOINT_URL")
+s3_endpoint = os.environ.get("FEAST_S3_ENDPOINT_URL")
 
 
 def generate_feast_repository_definitions(num_columns, parquet_file_path):
@@ -22,18 +22,18 @@ def generate_feast_repository_definitions(num_columns, parquet_file_path):
     Generates Feast repository definitions for accessing the Parquet file.
 
     :param num_columns: The number of columns in the Parquet file.
-    :param parquet_file_path: The S3 path to the Parquet file in MinIO.
+    :param parquet_file_path: The S3 path to the Parquet file.
 
     :return: A list containing the Feast entity, source, and FeatureView definitions.
     """
     # Define the entity. Assume 'id' is the join key in your Parquet files
     dummy_entity = Entity(name="id", value_type=ValueType.INT64, description="Dummy ID")
 
-    # Define the source pointing to the Parquet file in MinIO
+    # Define the source pointing to the Parquet file in S3
     dummy_source = FileSource(
         path=parquet_file_path,
         event_timestamp_column="event_timestamp",  # Adjust if your Parquet file has a different timestamp column
-        s3_endpoint_override=minio_endpoint,
+        s3_endpoint_override=s3_endpoint,
     )
 
     # Define the complete schema (including both entities and features)
@@ -60,17 +60,15 @@ def create_parquet_file(
     num_columns: int,
     num_rows: int,
     bucket_name: str,
-    repo_config: RepoConfig,
     s3_filepath: str,
 ):
     """
-    Creates a Parquet file with specified dimensions and uploads it to MinIO.
+    Creates a Parquet file with specified dimensions and uploads it to S3.
 
     :param num_columns: Number of columns in the DataFrame.
     :param num_rows: Number of rows in the DataFrame.
-    :param bucket_name: MinIO bucket name.
-    :param repo_config: Instance of RepoConfig containing MinIO configuration.
-    :param s3_filepath: Path to save the Parquet file in MinIO.
+    :param bucket_name: S3 bucket name.
+    :param s3_filepath: Path to save the Parquet file in S3.
     """
 
     # Create a DataFrame with random data
@@ -90,13 +88,13 @@ def create_parquet_file(
 
     fs = s3fs.S3FileSystem(
         client_kwargs={
-            "endpoint_url": minio_endpoint,
+            "endpoint_url": s3_endpoint,
             "aws_access_key_id": s3_access_key,
             "aws_secret_access_key": s3_secret_key,
         }
     )
 
-    # Write Table to a Parquet file in MinIO
+    # Write Table to a Parquet file in S3
     with fs.open(f"{bucket_name}/{s3_filepath}", "wb") as f:
         pq.write_table(table, f)
 

@@ -52,13 +52,13 @@ def run_tests():
         # Initialize Feature Store
         fs = FeatureStore(".")
 
-        # Define the path for the Parquet file in MinIO
+        # Define the path for the Parquet file in S3
         bucket_name = "my-bucket"
         s3_filepath = f"test_data_{num_columns}_{num_rows}.parquet"
 
-        # Create and upload the Parquet file to MinIO
+        # Create and upload the Parquet file to S3
         write_time = create_parquet_file(
-            num_columns, num_rows, bucket_name, fs.config, s3_filepath
+            num_columns, num_rows, bucket_name, s3_filepath
         )
 
         # Generate Feast repository definitions
