@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import csv
 import sys
 import polars as pl
+import cProfile
 
 
 def write_results_to_csv_file(results, outfilename):
@@ -48,6 +49,7 @@ def run_tests():
     results.append(
         ["Number of columns", "Number of rows", "get_historical_feature read in ms", "polarsstore read in ms", "overhead"]
     )
+    pr = cProfile.Profile()
 
     for num_columns, num_rows in test_cases:
         # Initialize Feature Store
@@ -90,12 +92,14 @@ def run_tests():
         elapsed_times = []
         overhead_times = []
         for i in range(20):
+            pr.enable()
             begin = time.perf_counter_ns()
             feature_df = fs.get_historical_features(
                 entity_df=entity_df, features=feature_refs
             )
             feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
             end = time.perf_counter_ns()
+            pr.disable()
             elapsed_times.append((end - begin) / 1e6)
             overhead_times.append((end - begin) / 1e6 - feature_df.elapsed_time_ms)
             sys.stderr.write('.')
@@ -111,6 +115,7 @@ def run_tests():
 
     # write results to csv file
     write_results_to_csv_file(results, "results.csv")
+    pr.dump_stats("results.prof")
 
 
 if __name__ == "__main__":
