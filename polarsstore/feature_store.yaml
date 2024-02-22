@@ -1,4 +1,5 @@
-project: parquet_minio
+project: polarsstore
+entity_key_serialization_version: 2
 registry: s3://my-bucket/registry.db
 provider: local
 offline_store:
