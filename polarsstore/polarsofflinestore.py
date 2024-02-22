@@ -14,15 +14,11 @@ from typing import List, Union, Optional, Dict, Any
 import logging
 from pydantic import BaseModel
 import os
-
-s3_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-s3_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+import time
 
 
 class PolarsOfflineStoreConfig(BaseModel):
     type: str = "polarsfeaturestore.PolarsOfflineStore"
-    minio_endpoint: str
-    bucket_name: str
 
 
 class CustomRetrievalJob(RetrievalJob):
@@ -66,8 +62,13 @@ class CustomRetrievalJob(RetrievalJob):
 class PolarsOfflineStore(OfflineStore):
     def __init__(self):
         super().__init__()
+        self.storage_options = {
+                'endpoint_url': os.environ.get('FEAST_S3_ENDPOINT_URL'),
+                'region': 'na', # needed for polars to take the endpoint_url into account
+                }
 
     def pull_all_from_table_or_query(
+        self,
         config: RepoConfig,
         data_source: DataSource,
         entity_names: Optional[Dict[str, Any]],
@@ -78,22 +79,8 @@ class PolarsOfflineStore(OfflineStore):
         Retrieve a full dataset from the specified data source.
         """
         try:
-            s3 = s3fs.S3FileSystem(
-                client_kwargs={
-                    "endpoint_url": config.offline_store.minio_endpoint,
-                    "aws_access_key_id": s3_access_key,
-                    "aws_secret_access_key": s3_secret_key,
-                }
-            )
-
-            # Construct the file path for the feature view data
-            bucket_name = data_source.path.split("/")[2]
-            file_path = "/".join(data_source.path.split("/")[3:])
-            full_path = f"{bucket_name}/{file_path}"
-
             # Read the Parquet file
-            with s3.open(full_path, "rb") as f:
-                feature_df = pl.read_parquet(f)
+            feature_df = pl.read_parquet(data_source.path, storage_options=self.storage_options)
 
             # Process and filter the data as necessary for your application
             # This might involve filtering based on entity_names, handling full_feature_names, etc.
@@ -117,22 +104,8 @@ class PolarsOfflineStore(OfflineStore):
         Retrieve the latest data from the specified data source.
         """
         try:
-            s3 = s3fs.S3FileSystem(
-                client_kwargs={
-                    "endpoint_url": config.offline_store.minio_endpoint,
-                    "aws_access_key_id": s3_access_key,
-                    "aws_secret_access_key": s3_secret_key,
-                }
-            )
-
-            # Construct the file path for the feature view data
-            bucket_name = data_source.path.split("/")[2]
-            file_path = "/".join(data_source.path.split("/")[3:])
-            full_path = f"{bucket_name}/{file_path}"
-
             # Read the Parquet file
-            with s3.open(full_path, "rb") as f:
-                feature_df = pl.read_parquet(f)
+            feature_df = pl.read_parquet(data_source.path, storage_options=self.storage_options)
 
             # Apply any necessary filters to get the latest data
             # Assuming your timestamp_field is a datetime column in your dataset
@@ -162,18 +135,10 @@ class PolarsOfflineStore(OfflineStore):
         full_feature_names: bool = False,
     ) -> RetrievalJob:
         try:
-            s3 = s3fs.S3FileSystem(
-                client_kwargs={
-                    "endpoint_url": config.offline_store.minio_endpoint,
-                    "aws_access_key_id": s3_access_key,
-                    "aws_secret_access_key": s3_secret_key,
-                }
-            )
 
             combined_feature_df = pl.DataFrame()
             for fv in feature_views:
-                # with s3.open(full_path, "rb") as f:
-                feature_df = pl.read_parquet(fv.batch_source.path)
+                feature_df = pl.read_parquet(fv.batch_source.path, storage_options=self.storage_options)
 
                 selected_features = [
                     ref.split(":")[1]
