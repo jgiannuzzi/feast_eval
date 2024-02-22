@@ -1,0 +1,620 @@
+From caae9352cccc68898427124156935242d3094124 Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:10:11 +0000
+Subject: [PATCH 01/10] Use polars' ability to write directly to S3
+
+---
+ polarsstore/feature_store.yaml    |  2 --
+ polarsstore/polarsofflinestore.py | 53 ++++++-------------------------
+ 2 files changed, 9 insertions(+), 46 deletions(-)
+
+diff --git a/polarsstore/feature_store.yaml b/polarsstore/feature_store.yaml
+index 15ad51b..dc80686 100644
+--- a/polarsstore/feature_store.yaml
++++ b/polarsstore/feature_store.yaml
+@@ -3,5 +3,3 @@ registry: s3://my-bucket/registry.db
+ provider: local
+ offline_store:
+   type: polarsofflinestore.PolarsOfflineStore
+-  minio_endpoint: http://localhost:9000  # Replace with your MinIO endpoint
+-  bucket_name: my-bucket  # Replace with your bucket name
+diff --git a/polarsstore/polarsofflinestore.py b/polarsstore/polarsofflinestore.py
+index 3d3e0e8..9220b10 100644
+--- a/polarsstore/polarsofflinestore.py
++++ b/polarsstore/polarsofflinestore.py
+@@ -14,15 +14,11 @@ from typing import List, Union, Optional, Dict, Any
+ import logging
+ from pydantic import BaseModel
+ import os
+-
+-s3_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+-s3_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
++import time
+ 
+ 
+ class PolarsOfflineStoreConfig(BaseModel):
+     type: str = "polarsfeaturestore.PolarsOfflineStore"
+-    minio_endpoint: str
+-    bucket_name: str
+ 
+ 
+ class CustomRetrievalJob(RetrievalJob):
+@@ -66,8 +62,13 @@ class CustomRetrievalJob(RetrievalJob):
+ class PolarsOfflineStore(OfflineStore):
+     def __init__(self):
+         super().__init__()
++        self.storage_options = {
++                'endpoint_url': os.environ.get('FEAST_S3_ENDPOINT_URL'),
++                'region': 'na', # needed for polars to take the endpoint_url into account
++                }
+ 
+     def pull_all_from_table_or_query(
++        self,
+         config: RepoConfig,
+         data_source: DataSource,
+         entity_names: Optional[Dict[str, Any]],
+@@ -78,22 +79,8 @@ class PolarsOfflineStore(OfflineStore):
+         Retrieve a full dataset from the specified data source.
+         """
+         try:
+-            s3 = s3fs.S3FileSystem(
+-                client_kwargs={
+-                    "endpoint_url": config.offline_store.minio_endpoint,
+-                    "aws_access_key_id": s3_access_key,
+-                    "aws_secret_access_key": s3_secret_key,
+-                }
+-            )
+-
+-            # Construct the file path for the feature view data
+-            bucket_name = data_source.path.split("/")[2]
+-            file_path = "/".join(data_source.path.split("/")[3:])
+-            full_path = f"{bucket_name}/{file_path}"
+-
+             # Read the Parquet file
+-            with s3.open(full_path, "rb") as f:
+-                feature_df = pl.read_parquet(f)
++            feature_df = pl.read_parquet(data_source.path, storage_options=self.storage_options)
+ 
+             # Process and filter the data as necessary for your application
+             # This might involve filtering based on entity_names, handling full_feature_names, etc.
+@@ -117,22 +104,8 @@ class PolarsOfflineStore(OfflineStore):
+         Retrieve the latest data from the specified data source.
+         """
+         try:
+-            s3 = s3fs.S3FileSystem(
+-                client_kwargs={
+-                    "endpoint_url": config.offline_store.minio_endpoint,
+-                    "aws_access_key_id": s3_access_key,
+-                    "aws_secret_access_key": s3_secret_key,
+-                }
+-            )
+-
+-            # Construct the file path for the feature view data
+-            bucket_name = data_source.path.split("/")[2]
+-            file_path = "/".join(data_source.path.split("/")[3:])
+-            full_path = f"{bucket_name}/{file_path}"
+-
+             # Read the Parquet file
+-            with s3.open(full_path, "rb") as f:
+-                feature_df = pl.read_parquet(f)
++            feature_df = pl.read_parquet(data_source.path, storage_options=self.storage_options)
+ 
+             # Apply any necessary filters to get the latest data
+             # Assuming your timestamp_field is a datetime column in your dataset
+@@ -162,18 +135,10 @@ class PolarsOfflineStore(OfflineStore):
+         full_feature_names: bool = False,
+     ) -> RetrievalJob:
+         try:
+-            s3 = s3fs.S3FileSystem(
+-                client_kwargs={
+-                    "endpoint_url": config.offline_store.minio_endpoint,
+-                    "aws_access_key_id": s3_access_key,
+-                    "aws_secret_access_key": s3_secret_key,
+-                }
+-            )
+ 
+             combined_feature_df = pl.DataFrame()
+             for fv in feature_views:
+-                # with s3.open(full_path, "rb") as f:
+-                feature_df = pl.read_parquet(fv.batch_source.path)
++                feature_df = pl.read_parquet(fv.batch_source.path, storage_options=self.storage_options)
+ 
+                 selected_features = [
+                     ref.split(":")[1]
+-- 
+2.43.1
+
+
+From eeee48872950d896d8ac8ef75736f8401d8dd55a Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:10:47 +0000
+Subject: [PATCH 02/10] Update config to avoid warnings
+
+---
+ polarsstore/feature_store.yaml | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/polarsstore/feature_store.yaml b/polarsstore/feature_store.yaml
+index dc80686..904acc1 100644
+--- a/polarsstore/feature_store.yaml
++++ b/polarsstore/feature_store.yaml
+@@ -1,4 +1,5 @@
+-project: parquet_minio
++project: polarsstore
++entity_key_serialization_version: 2
+ registry: s3://my-bucket/registry.db
+ provider: local
+ offline_store:
+-- 
+2.43.1
+
+
+From 0bad46559245018076c7892c40cee12bea6b7b7e Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:14:06 +0000
+Subject: [PATCH 03/10] Rename anything minio to s3
+
+---
+ polarsstore/run_test.py |  6 +++---
+ polarsstore/utils.py    | 20 +++++++++-----------
+ 2 files changed, 12 insertions(+), 14 deletions(-)
+
+diff --git a/polarsstore/run_test.py b/polarsstore/run_test.py
+index f6c9533..041b72f 100644
+--- a/polarsstore/run_test.py
++++ b/polarsstore/run_test.py
+@@ -52,13 +52,13 @@ def run_tests():
+         # Initialize Feature Store
+         fs = FeatureStore(".")
+ 
+-        # Define the path for the Parquet file in MinIO
++        # Define the path for the Parquet file in S3
+         bucket_name = "my-bucket"
+         s3_filepath = f"test_data_{num_columns}_{num_rows}.parquet"
+ 
+-        # Create and upload the Parquet file to MinIO
++        # Create and upload the Parquet file to S3
+         write_time = create_parquet_file(
+-            num_columns, num_rows, bucket_name, fs.config, s3_filepath
++            num_columns, num_rows, bucket_name, s3_filepath
+         )
+ 
+         # Generate Feast repository definitions
+diff --git a/polarsstore/utils.py b/polarsstore/utils.py
+index 12fdba3..e65ea62 100644
+--- a/polarsstore/utils.py
++++ b/polarsstore/utils.py
+@@ -14,7 +14,7 @@ import time
+ 
+ s3_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+ s3_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+-minio_endpoint = os.environ.get("FEAST_S3_ENDPOINT_URL")
++s3_endpoint = os.environ.get("FEAST_S3_ENDPOINT_URL")
+ 
+ 
+ def generate_feast_repository_definitions(num_columns, parquet_file_path):
+@@ -22,18 +22,18 @@ def generate_feast_repository_definitions(num_columns, parquet_file_path):
+     Generates Feast repository definitions for accessing the Parquet file.
+ 
+     :param num_columns: The number of columns in the Parquet file.
+-    :param parquet_file_path: The S3 path to the Parquet file in MinIO.
++    :param parquet_file_path: The S3 path to the Parquet file.
+ 
+     :return: A list containing the Feast entity, source, and FeatureView definitions.
+     """
+     # Define the entity. Assume 'id' is the join key in your Parquet files
+     dummy_entity = Entity(name="id", value_type=ValueType.INT64, description="Dummy ID")
+ 
+-    # Define the source pointing to the Parquet file in MinIO
++    # Define the source pointing to the Parquet file in S3
+     dummy_source = FileSource(
+         path=parquet_file_path,
+         event_timestamp_column="event_timestamp",  # Adjust if your Parquet file has a different timestamp column
+-        s3_endpoint_override=minio_endpoint,
++        s3_endpoint_override=s3_endpoint,
+     )
+ 
+     # Define the complete schema (including both entities and features)
+@@ -60,17 +60,15 @@ def create_parquet_file(
+     num_columns: int,
+     num_rows: int,
+     bucket_name: str,
+-    repo_config: RepoConfig,
+     s3_filepath: str,
+ ):
+     """
+-    Creates a Parquet file with specified dimensions and uploads it to MinIO.
++    Creates a Parquet file with specified dimensions and uploads it to S3.
+ 
+     :param num_columns: Number of columns in the DataFrame.
+     :param num_rows: Number of rows in the DataFrame.
+-    :param bucket_name: MinIO bucket name.
+-    :param repo_config: Instance of RepoConfig containing MinIO configuration.
+-    :param s3_filepath: Path to save the Parquet file in MinIO.
++    :param bucket_name: S3 bucket name.
++    :param s3_filepath: Path to save the Parquet file in S3.
+     """
+ 
+     # Create a DataFrame with random data
+@@ -90,13 +88,13 @@ def create_parquet_file(
+ 
+     fs = s3fs.S3FileSystem(
+         client_kwargs={
+-            "endpoint_url": minio_endpoint,
++            "endpoint_url": s3_endpoint,
+             "aws_access_key_id": s3_access_key,
+             "aws_secret_access_key": s3_secret_key,
+         }
+     )
+ 
+-    # Write Table to a Parquet file in MinIO
++    # Write Table to a Parquet file in S3
+     with fs.open(f"{bucket_name}/{s3_filepath}", "wb") as f:
+         pq.write_table(table, f)
+ 
+-- 
+2.43.1
+
+
+From b5912e3407c07346f2280ee8d009dfc3a177ecb2 Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:14:18 +0000
+Subject: [PATCH 04/10] Create Parquet file with Polars
+
+---
+ polarsstore/utils.py | 23 ++++++++---------------
+ 1 file changed, 8 insertions(+), 15 deletions(-)
+
+diff --git a/polarsstore/utils.py b/polarsstore/utils.py
+index e65ea62..80874ac 100644
+--- a/polarsstore/utils.py
++++ b/polarsstore/utils.py
+@@ -1,7 +1,5 @@
+-import pandas as pd
+ import numpy as np
+-import pyarrow as pa
+-import pyarrow.parquet as pq
++import polars as pl
+ from datetime import datetime, timedelta
+ 
+ from datetime import timedelta
+@@ -72,18 +70,13 @@ def create_parquet_file(
+     """
+ 
+     # Create a DataFrame with random data
+-    df = pd.DataFrame(
++    df = pl.DataFrame(
+         np.random.randint(0, 100, size=(num_rows, num_columns)),
+-        columns=[f"feature_{i}" for i in range(1, num_columns + 1)],
+-    )
+-    df["id"] = np.arange(1, num_rows + 1)  # Adding a user_id column for entity
+-    df["event_timestamp"] = [
+-        datetime.now() - timedelta(minutes=i) for i in range(num_rows)
+-    ]
+-
+-    # Convert DataFrame to PyArrow Table
+-    table = pa.Table.from_pandas(df)
+-
++        schema=[f"feature_{i}" for i in range(1, num_columns + 1)],
++    ).with_columns([
++        pl.arange(1, num_rows + 1).alias("id"),
++        pl.Series(datetime.now() - timedelta(minutes=i) for i in range(num_rows)).alias('event_timestamp')
++    ])
+     begin = time.perf_counter_ns()
+ 
+     fs = s3fs.S3FileSystem(
+@@ -96,7 +89,7 @@ def create_parquet_file(
+ 
+     # Write Table to a Parquet file in S3
+     with fs.open(f"{bucket_name}/{s3_filepath}", "wb") as f:
+-        pq.write_table(table, f)
++        df.write_parquet(f)
+ 
+     end = time.perf_counter_ns()
+ 
+-- 
+2.43.1
+
+
+From 08f0a05f011e886d86975ab6567a4487c3cd4c4b Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:15:30 +0000
+Subject: [PATCH 05/10] Compute Feast overhead
+
+---
+ polarsstore/polarsofflinestore.py |  9 +++++++--
+ polarsstore/run_test.py           | 10 ++++++----
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/polarsstore/polarsofflinestore.py b/polarsstore/polarsofflinestore.py
+index 9220b10..9472c4d 100644
+--- a/polarsstore/polarsofflinestore.py
++++ b/polarsstore/polarsofflinestore.py
+@@ -22,8 +22,9 @@ class PolarsOfflineStoreConfig(BaseModel):
+ 
+ 
+ class CustomRetrievalJob(RetrievalJob):
+-    def __init__(self, dataframe: pl.DataFrame):
++    def __init__(self, dataframe: pl.DataFrame, elapsed_time_ms: float = None):
+         self.dataframe = dataframe
++        self.elapsed_time_ms = elapsed_time_ms
+ 
+     def to_df(self):
+         return self.dataframe
+@@ -135,6 +136,7 @@ class PolarsOfflineStore(OfflineStore):
+         full_feature_names: bool = False,
+     ) -> RetrievalJob:
+         try:
++            begin = time.perf_counter_ns()
+ 
+             combined_feature_df = pl.DataFrame()
+             for fv in feature_views:
+@@ -169,7 +171,10 @@ class PolarsOfflineStore(OfflineStore):
+             else:
+                 raise NotImplementedError("SQL query handling is not implemented.")
+ 
+-            return CustomRetrievalJob(result_df)
++            end = time.perf_counter_ns()
++            elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
++
++            return CustomRetrievalJob(result_df, elapsed_time_ms)
+ 
+         except Exception as e:
+             logging.error(f"Error in get_historical_features: {str(e)}")
+diff --git a/polarsstore/run_test.py b/polarsstore/run_test.py
+index 041b72f..d53105a 100644
+--- a/polarsstore/run_test.py
++++ b/polarsstore/run_test.py
+@@ -45,7 +45,7 @@ def run_tests():
+     print("Running tests....")
+     results = []
+     results.append(
+-        ["Number of columns", "Number of rows", "get_historical_feature read in ms"]
++        ["Number of columns", "Number of rows", "get_historical_feature read in ms", "polarsstore read in ms", "overhead"]
+     )
+ 
+     for num_columns, num_rows in test_cases:
+@@ -87,15 +87,17 @@ def run_tests():
+         begin = time.perf_counter_ns()
+         feature_df = fs.get_historical_features(
+             entity_df=entity_df, features=feature_refs
+-        ).to_df()  # Use .to_df() to materialize the result into a DataFrame
++        )
++        feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
+         end = time.perf_counter_ns()
+ 
+         elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
++        overhead_time_ms = elapsed_time_ms - feature_df.elapsed_time_ms
+         print(
+-            f"Test with {num_columns} columns and {num_rows} rows took {elapsed_time_ms} ms"
++            f"Test with {num_columns} columns and {num_rows} rows took {elapsed_time_ms} ms ({feature_df.elapsed_time_ms} ms in custom store - overhead: {overhead_time_ms})"
+         )
+ 
+-        results.append([num_columns, num_rows, elapsed_time_ms])
++        results.append([num_columns, num_rows, elapsed_time_ms, feature_df.elapsed_time_ms, overhead_time_ms])
+ 
+     # write results to csv file
+     write_results_to_csv_file(results, "results.csv")
+-- 
+2.43.1
+
+
+From 42fbda178a7f71265551dc192bc4beaa3b725f6a Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:17:59 +0000
+Subject: [PATCH 06/10] Add patch for Feast's feature view projection to
+ decrease overhead
+
+---
+ fvp.diff | 59 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+ create mode 100644 fvp.diff
+
+diff --git a/fvp.diff b/fvp.diff
+new file mode 100644
+index 0000000..36f1085
+--- /dev/null
++++ b/fvp.diff
+@@ -0,0 +1,59 @@
++diff --color -urN a/feature_view_projection.py b/feature_view_projection.py
++--- a/feature_view_projection.py	2024-02-22 12:16:19.329295052 +0000
+++++ b/feature_view_projection.py	2024-02-22 12:17:16.663779678 +0000
++@@ -32,7 +32,7 @@
++     name: str
++     name_alias: Optional[str]
++     desired_features: List[str]
++-    features: List[Field]
+++    features: Dict[str, Field]
++     join_key_map: Dict[str, str] = {}
++ 
++     def name_to_use(self):
++@@ -44,7 +44,7 @@
++             feature_view_name_alias=self.name_alias or "",
++             join_key_map=self.join_key_map,
++         )
++-        for feature in self.features:
+++        for feature in self.features.values():
++             feature_reference_proto.feature_columns.append(feature.to_proto())
++ 
++         return feature_reference_proto
++@@ -54,28 +54,32 @@
++         feature_view_projection = FeatureViewProjection(
++             name=proto.feature_view_name,
++             name_alias=proto.feature_view_name_alias,
++-            features=[],
+++            features={},
++             join_key_map=dict(proto.join_key_map),
++             desired_features=[],
++         )
++         for feature_column in proto.feature_columns:
++-            feature_view_projection.features.append(Field.from_proto(feature_column))
+++            field = Field.from_proto(feature_column)
+++            feature_view_projection.features[field.name] = field
++ 
++         return feature_view_projection
++ 
++     @staticmethod
++     def from_definition(base_feature_view: "BaseFeatureView"):
+++        features = {}
+++        for feature in base_feature_view.features:
+++            features[feature.name] = feature
++         return FeatureViewProjection(
++             name=base_feature_view.name,
++             name_alias=None,
++-            features=base_feature_view.features,
+++            features=features,
++             desired_features=[],
++         )
++ 
++     def get_feature(self, feature_name: str) -> Field:
++         try:
++-            return next(field for field in self.features if field.name == feature_name)
++-        except StopIteration:
+++            return self.features[feature_name]
+++        except KeyError:
++             raise KeyError(
++                 f"Feature {feature_name} not found in projection {self.name_to_use()}"
++             )
+-- 
+2.43.1
+
+
+From 80b5f59349f87dc5063e87239672824be7298a62 Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:50:44 +0000
+Subject: [PATCH 07/10] Add patch for Feast's typechecked field overhead
+
+---
+ polarsstore/typechecked.diff | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+ create mode 100644 polarsstore/typechecked.diff
+
+diff --git a/polarsstore/typechecked.diff b/polarsstore/typechecked.diff
+new file mode 100644
+index 0000000..1a41e56
+--- /dev/null
++++ b/polarsstore/typechecked.diff
+@@ -0,0 +1,12 @@
++diff --color -urN --exclude __pycache__ a/field.py b/field.py
++--- a/field.py	2024-02-17 18:55:00.000000000 +0000
+++++ b/field.py	2024-02-22 12:42:27.291901488 +0000
++@@ -22,7 +22,7 @@
++ from feast.value_type import ValueType
++ 
++ 
++-@typechecked
+++# @typechecked
++ class Field:
++     """
++     A Field represents a set of values with the same structure.
+-- 
+2.43.1
+
+
+From 37ca8572cc2e32ec84bee615a4c11894a15b1ff3 Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 12:52:35 +0000
+Subject: [PATCH 08/10] Store registry locally
+
+---
+ polarsstore/feature_store.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/polarsstore/feature_store.yaml b/polarsstore/feature_store.yaml
+index 904acc1..0701b93 100644
+--- a/polarsstore/feature_store.yaml
++++ b/polarsstore/feature_store.yaml
+@@ -1,6 +1,6 @@
+ project: polarsstore
+ entity_key_serialization_version: 2
+-registry: s3://my-bucket/registry.db
++registry: data/registry.db
+ provider: local
+ offline_store:
+   type: polarsofflinestore.PolarsOfflineStore
+-- 
+2.43.1
+
+
+From 38b2836d059414b1757a8c29c65e0a6258d34e1e Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 13:32:10 +0000
+Subject: [PATCH 09/10] Use postgres for the registry
+
+---
+ polarsstore/feature_store.yaml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/polarsstore/feature_store.yaml b/polarsstore/feature_store.yaml
+index 0701b93..eec5293 100644
+--- a/polarsstore/feature_store.yaml
++++ b/polarsstore/feature_store.yaml
+@@ -1,6 +1,8 @@
+ project: polarsstore
+ entity_key_serialization_version: 2
+-registry: data/registry.db
++registry:
++  registry_type: sql
++  path: postgresql://postgres:postgres@localhost:5432/postgres
+ provider: local
+ offline_store:
+   type: polarsofflinestore.PolarsOfflineStore
+-- 
+2.43.1
+
+
+From ccb891c8437ec4db0ba18d57e4cb864dffe71bc3 Mon Sep 17 00:00:00 2001
+From: Jonathan Giannuzzi <jonathan@giannuzzi.me>
+Date: Thu, 22 Feb 2024 13:34:03 +0000
+Subject: [PATCH 10/10] Enable profiling of get_historical_features
+
+---
+ polarsstore/run_test.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/polarsstore/run_test.py b/polarsstore/run_test.py
+index d53105a..03e0d98 100644
+--- a/polarsstore/run_test.py
++++ b/polarsstore/run_test.py
+@@ -7,6 +7,7 @@ import time
+ from datetime import datetime, timedelta
+ import csv
+ import polars as pl
++import cProfile
+ 
+ 
+ def write_results_to_csv_file(results, outfilename):
+@@ -47,6 +48,7 @@ def run_tests():
+     results.append(
+         ["Number of columns", "Number of rows", "get_historical_feature read in ms", "polarsstore read in ms", "overhead"]
+     )
++    pr = cProfile.Profile()
+ 
+     for num_columns, num_rows in test_cases:
+         # Initialize Feature Store
+@@ -84,12 +86,14 @@ def run_tests():
+         ]
+ 
+         # Time the historical feature retrieval
++        pr.enable()
+         begin = time.perf_counter_ns()
+         feature_df = fs.get_historical_features(
+             entity_df=entity_df, features=feature_refs
+         )
+         feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
+         end = time.perf_counter_ns()
++        pr.disable()
+ 
+         elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
+         overhead_time_ms = elapsed_time_ms - feature_df.elapsed_time_ms
+@@ -101,6 +105,7 @@ def run_tests():
+ 
+     # write results to csv file
+     write_results_to_csv_file(results, "results.csv")
++    pr.dump_stats("results.prof")
+ 
+ 
+ if __name__ == "__main__":
+-- 
+2.43.1
+
