@@ -1,0 +1,12 @@
+diff --color -urN --exclude __pycache__ a/field.py b/field.py
+--- a/field.py	2024-02-17 18:55:00.000000000 +0000
++++ b/field.py	2024-02-22 12:42:27.291901488 +0000
+@@ -22,7 +22,7 @@
+ from feast.value_type import ValueType
+ 
+ 
+-@typechecked
++# @typechecked
+ class Field:
+     """
+     A Field represents a set of values with the same structure.
