@@ -6,6 +6,7 @@ from utils import (
 import time
 from datetime import datetime, timedelta
 import csv
+import sys
 import polars as pl
 
 
@@ -84,17 +85,26 @@ def run_tests():
         ]
 
         # Time the historical feature retrieval
-        begin = time.perf_counter_ns()
-        feature_df = fs.get_historical_features(
-            entity_df=entity_df, features=feature_refs
-        )
-        feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
-        end = time.perf_counter_ns()
+        sys.stderr.write(f"Test with {num_columns} columns and {num_rows} rows")
+        sys.stderr.flush()
+        elapsed_times = []
+        overhead_times = []
+        for i in range(20):
+            begin = time.perf_counter_ns()
+            feature_df = fs.get_historical_features(
+                entity_df=entity_df, features=feature_refs
+            )
+            feature_df.to_df()  # Use .to_df() to materialize the result into a DataFrame
+            end = time.perf_counter_ns()
+            elapsed_times.append((end - begin) / 1e6)
+            overhead_times.append((end - begin) / 1e6 - feature_df.elapsed_time_ms)
+            sys.stderr.write('.')
+            sys.stderr.flush()
 
-        elapsed_time_ms = (end - begin) / 1e6  # Convert nanoseconds to milliseconds
-        overhead_time_ms = elapsed_time_ms - feature_df.elapsed_time_ms
+        elapsed_time_ms = int(sum(elapsed_times) / len(elapsed_times))
+        overhead_time_ms = int(sum(overhead_times) / len(overhead_times))
         print(
-            f"Test with {num_columns} columns and {num_rows} rows took {elapsed_time_ms} ms ({feature_df.elapsed_time_ms} ms in custom store - overhead: {overhead_time_ms})"
+            f"\rTest with {num_columns} columns and {num_rows} rows took {elapsed_time_ms}ms (overhead: {overhead_time_ms}ms)"
         )
 
         results.append([num_columns, num_rows, elapsed_time_ms, feature_df.elapsed_time_ms, overhead_time_ms])
