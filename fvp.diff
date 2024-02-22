@@ -1,0 +1,59 @@
+diff --color -urN a/feature_view_projection.py b/feature_view_projection.py
+--- a/feature_view_projection.py	2024-02-22 12:16:19.329295052 +0000
++++ b/feature_view_projection.py	2024-02-22 12:17:16.663779678 +0000
+@@ -32,7 +32,7 @@
+     name: str
+     name_alias: Optional[str]
+     desired_features: List[str]
+-    features: List[Field]
++    features: Dict[str, Field]
+     join_key_map: Dict[str, str] = {}
+ 
+     def name_to_use(self):
+@@ -44,7 +44,7 @@
+             feature_view_name_alias=self.name_alias or "",
+             join_key_map=self.join_key_map,
+         )
+-        for feature in self.features:
++        for feature in self.features.values():
+             feature_reference_proto.feature_columns.append(feature.to_proto())
+ 
+         return feature_reference_proto
+@@ -54,28 +54,32 @@
+         feature_view_projection = FeatureViewProjection(
+             name=proto.feature_view_name,
+             name_alias=proto.feature_view_name_alias,
+-            features=[],
++            features={},
+             join_key_map=dict(proto.join_key_map),
+             desired_features=[],
+         )
+         for feature_column in proto.feature_columns:
+-            feature_view_projection.features.append(Field.from_proto(feature_column))
++            field = Field.from_proto(feature_column)
++            feature_view_projection.features[field.name] = field
+ 
+         return feature_view_projection
+ 
+     @staticmethod
+     def from_definition(base_feature_view: "BaseFeatureView"):
++        features = {}
++        for feature in base_feature_view.features:
++            features[feature.name] = feature
+         return FeatureViewProjection(
+             name=base_feature_view.name,
+             name_alias=None,
+-            features=base_feature_view.features,
++            features=features,
+             desired_features=[],
+         )
+ 
+     def get_feature(self, feature_name: str) -> Field:
+         try:
+-            return next(field for field in self.features if field.name == feature_name)
+-        except StopIteration:
++            return self.features[feature_name]
++        except KeyError:
+             raise KeyError(
+                 f"Feature {feature_name} not found in projection {self.name_to_use()}"
+             )
