@@ -1,7 +1,5 @@
-import pandas as pd
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
+import polars as pl
 from datetime import datetime, timedelta
 
 from datetime import timedelta
@@ -72,18 +70,13 @@ def create_parquet_file(
     """
 
     # Create a DataFrame with random data
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         np.random.randint(0, 100, size=(num_rows, num_columns)),
-        columns=[f"feature_{i}" for i in range(1, num_columns + 1)],
-    )
-    df["id"] = np.arange(1, num_rows + 1)  # Adding a user_id column for entity
-    df["event_timestamp"] = [
-        datetime.now() - timedelta(minutes=i) for i in range(num_rows)
-    ]
-
-    # Convert DataFrame to PyArrow Table
-    table = pa.Table.from_pandas(df)
-
+        schema=[f"feature_{i}" for i in range(1, num_columns + 1)],
+    ).with_columns([
+        pl.arange(1, num_rows + 1).alias("id"),
+        pl.Series(datetime.now() - timedelta(minutes=i) for i in range(num_rows)).alias('event_timestamp')
+    ])
     begin = time.perf_counter_ns()
 
     fs = s3fs.S3FileSystem(
@@ -96,7 +89,7 @@ def create_parquet_file(
 
     # Write Table to a Parquet file in S3
     with fs.open(f"{bucket_name}/{s3_filepath}", "wb") as f:
-        pq.write_table(table, f)
+        df.write_parquet(f)
 
     end = time.perf_counter_ns()
 
